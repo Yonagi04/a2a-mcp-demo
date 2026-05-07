@@ -16,7 +16,7 @@ from utilities.common.network_logger import network_logger
 @click.command()
 @click.option("--agent", default="http://127.0.0.1:10001", help="Base URL of the A2A agent server")
 @click.option("--session", default=0, help="Session ID (use 0 to generate a new one)")
-async def cli(agent: str, session: str, mode: str, threads: int):
+async def cli(agent: str, session: str):
     """
     CLI to send user messages to an A2A agent using an A2A client
     and display the responses. Supports single-threaded interactive mode
