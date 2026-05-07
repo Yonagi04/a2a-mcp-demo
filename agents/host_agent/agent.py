@@ -35,50 +35,6 @@ handler = logging.StreamHandler()
 handler.setLevel(logging.INFO)
 logger.addHandler(handler)
 
-
-async def llm_before_model_callback(callback_context, llm_request):
-    """LLM 调用开始前的回调，记录开始时间"""
-    callback_context.state["_llm_call_start"] = time.time()
-    callback_context.state["_llm_model"] = getattr(llm_request, 'model', 'unknown')
-    return None
-
-
-async def llm_after_model_callback(callback_context, llm_response):
-    """LLM 调用完成后的回调，记录调用时长"""
-    start_time = callback_context.state.get("_llm_call_start")
-    model = callback_context.state.get("_llm_model", "unknown")
-
-    if start_time:
-        latency = time.time() - start_time
-        source = callback_context.agent_name if hasattr(callback_context, 'agent_name') else "unknown"
-
-        # 获取 token 使用量
-        prompt_tokens = 0
-        completion_tokens = 0
-        if hasattr(llm_response, 'usage_metadata') and llm_response.usage_metadata:
-            usage = llm_response.usage_metadata
-            prompt_tokens = getattr(usage, 'prompt_token_count', 0)
-            completion_tokens = getattr(usage, 'candidates_token_count', 0)
-
-        # 判断响应状态
-        response_status = "success"
-        error = None
-        if hasattr(llm_response, 'error') and llm_response.error:
-            response_status = "failure"
-            error = str(llm_response.error)
-
-        network_logger.log_llm_call(
-            source=source,
-            model=model,
-            latency_seconds=latency,
-            response_status=response_status,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            error=error,
-        )
-
-    return None
-
 class HostAgent:
     """
     Orchestrator agent 
@@ -97,8 +53,6 @@ class HostAgent:
         self._agent = None
         self._user_id = "host_agent_user"
         self._runner = None
-        self._tool_call_times: dict[str, tuple[str, float]] = {}  # tool_call_id -> (tool_name, start_time)
-        self._tool_call_log_entries: dict[str, Any] = {}  # tool_call_id -> NetworkLogEntry
 
     async def create(self):
         self._agent = await self._build_agent()
@@ -146,39 +100,14 @@ class HostAgent:
 
         connector = AgentConnector(agent_card=matched_card)
 
-        # 记录 A2A 调用时延和日志
-        request_id = str(uuid4())
-        log_entry = network_logger.log_a2a_request(
-            source="host_agent",
-            destination=agent_name,
-            request_id=request_id,
-            message=message,
-        )
-
-        a2a_start = time.time()
-        success = True
         result = None
-        error_msg = None
 
         try:
             result = await connector.send_task(message=message, session_id=str(uuid4()))
         except Exception as e:
-            success = False
-            error_msg = str(e)
             result = f"A2A call failed: {str(e)}"
 
-        a2a_latency = time.time() - a2a_start
-
-        network_logger.log_a2a_response(
-            entry=log_entry,
-            response_time_seconds=a2a_latency,
-            success=success,
-            result=result[:500] if result else None,
-            error=error_msg
-        )
-
         return result
-
                 
     
     async def _build_agent(self) -> LlmAgent:
@@ -192,8 +121,6 @@ class HostAgent:
             model=model,
             instruction=self.system_instruction,
             description=self.description,
-            before_model_callback=llm_before_model_callback,
-            after_model_callback=llm_after_model_callback,
             tools=[
                 FunctionTool(self._delegate_task),
                 FunctionTool(self._list_agents),
@@ -246,18 +173,6 @@ class HostAgent:
             if function_calls:
                 for fc in function_calls:
                     tool_name = getattr(fc, 'name', str(fc))
-                    fc_id = getattr(fc, 'id', None)
-                    fc_args = getattr(fc, 'args', {})
-                    if fc_id:
-                        self._tool_call_times[fc_id] = (tool_name, time.time())
-                        log_entry = network_logger.log_mcp_request(
-                            source="host_agent",
-                            destination=tool_name,
-                            request_id=fc_id,
-                            tool_name=tool_name,
-                            arguments=fc_args
-                        )
-                        self._tool_call_log_entries[fc_id] = log_entry
                     logger.info(f"type: mcp_tool, tool: {tool_name}, action: called")
 
             # 2. function_responses 事件：计算并记录时延
@@ -265,34 +180,13 @@ class HostAgent:
             if function_responses:
                 for fr in function_responses:
                     tool_name = getattr(fr, 'name', str(fr))
-                    fr_id = getattr(fr, 'id', None)
                     latency = None
                     success = True
-                    result_data = None
-
-                    if fr_id and fr_id in self._tool_call_times:
-                        _, start_time = self._tool_call_times.pop(fr_id)
-                        latency = time.time() - start_time
-
-                    log_entry = self._tool_call_log_entries.pop(fr_id, None) if fr_id else None
 
                     if hasattr(fr, 'response') and fr.response:
                         success = fr.response is not None
-                        try:
-                            result_data = fr.response.model_dump(mode='json', exclude_none=True)
-                        except Exception:
-                            result_data = str(fr.response)
                     else:
                         success = False
-
-                    if log_entry and latency is not None:
-                        network_logger.log_mcp_response(
-                            entry=log_entry,
-                            response_time_seconds=latency,
-                            success=success,
-                            result=result_data,
-                            error=None if success else "MCP tool call failed"
-                        )
 
                     logger.info(f"type: mcp_tool, tool: {tool_name}, latency: {latency:.3f}s, success: {success}")
 

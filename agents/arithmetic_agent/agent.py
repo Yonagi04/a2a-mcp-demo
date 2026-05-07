@@ -19,53 +19,9 @@ import json
 import os
 import time
 from typing import Any
-from utilities.common.network_logger import network_logger
 
 from dotenv import load_dotenv
 load_dotenv()
-
-async def llm_before_model_callback(callback_context, llm_request):
-    """LLM 调用开始前的回调，记录开始时间"""
-    callback_context.state["_llm_call_start"] = time.time()
-    callback_context.state["_llm_model"] = getattr(llm_request, 'model', 'unknown')
-    return None
-
-
-async def llm_after_model_callback(callback_context, llm_response):
-    """LLM 调用完成后的回调，记录调用时长"""
-    start_time = callback_context.state.get("_llm_call_start")
-    model = callback_context.state.get("_llm_model", "unknown")
-
-    if start_time:
-        latency = time.time() - start_time
-        source = callback_context.agent_name if hasattr(callback_context, 'agent_name') else "unknown"
-
-        # 获取 token 使用量
-        prompt_tokens = 0
-        completion_tokens = 0
-        if hasattr(llm_response, 'usage_metadata') and llm_response.usage_metadata:
-            usage = llm_response.usage_metadata
-            prompt_tokens = getattr(usage, 'prompt_token_count', 0)
-            completion_tokens = getattr(usage, 'candidates_token_count', 0)
-
-        # 判断响应状态
-        response_status = "success"
-        error = None
-        if hasattr(llm_response, 'error') and llm_response.error:
-            response_status = "failure"
-            error = str(llm_response.error)
-
-        network_logger.log_llm_call(
-            source=source,
-            model=model,
-            latency_seconds=latency,
-            response_status=response_status,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            error=error,
-        )
-
-    return None
 
 class ArithmeticAgent:
 
@@ -105,8 +61,6 @@ class ArithmeticAgent:
             model=model,
             instruction=self.system_instruction,
             description=self.description,
-            before_model_callback=llm_before_model_callback,
-            after_model_callback=llm_after_model_callback,
             tools=[
                 *mcp_tools
             ]

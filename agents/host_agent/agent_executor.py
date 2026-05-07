@@ -17,10 +17,6 @@ from a2a.types import (
 )
 
 import asyncio
-import time
-
-from utilities.common.network_logger import network_logger
-
 
 class HostAgentExecutor(AgentExecutor):
     """
@@ -41,22 +37,8 @@ class HostAgentExecutor(AgentExecutor):
         """
         Executes the agent with the provided context and event queue.
         """
-        start_time = time.time()
         query = context.get_user_input()
         task = context.current_task
-
-        # 获取调用方信息
-        request_id = ""
-        source = "unknown"
-        if context.message:
-            request_id = getattr(context.message, 'message_id', '') or ''
-
-        log_entry = network_logger.log_a2a_handle_request(
-            source=source,
-            destination="host_agent",
-            request_id=request_id,
-            message=query,
-        )
 
         if not task:
             task = new_task(context.message)
@@ -82,28 +64,12 @@ class HostAgentExecutor(AgentExecutor):
                     )
 
                     await asyncio.sleep(0.1)  # Allow time for the message to be processed
-
-                    handling_time = time.time() - start_time
-                    network_logger.log_a2a_handle_response(
-                        entry=log_entry,
-                        handling_time_seconds=handling_time,
-                        response_status="success",
-                        error=None
-                    )
-
                     break
         except Exception as e:
-            handling_time = time.time() - start_time
             error_message = f"An error occurred: {str(e)}"
             await updater.update_status(
                 TaskState.failed,
                 new_agent_text_message(error_message, task.contextId, task.id)
-            )
-            network_logger.log_a2a_handle_response(
-                entry=log_entry,
-                handling_time_seconds=handling_time,
-                response_status="failure",
-                error=str(e)
             )
             raise
 
