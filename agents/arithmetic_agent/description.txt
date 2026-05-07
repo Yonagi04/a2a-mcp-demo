@@ -1,0 +1,1 @@
+An arithmetic agent that receives calculation requests from other agents, executes them via MCP tools, and returns the results.
